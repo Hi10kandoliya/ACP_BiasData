@@ -56,7 +56,8 @@ def load_datasource(path: str) -> dict[str, pd.DataFrame]:
     sheets = {}
 
     # Sheet 1: Main advisor dataset
-    df = pd.read_excel(xl, sheet_name="Advisor_Dataset")
+    df = pd.read_excel(xl, sheet_name="Advisor_Dataset", header=3)
+    
     df = df.rename(columns=COLUMN_MAP)
     df.columns = [c.lower() for c in df.columns]
     # Normalise string categories

@@ -2,90 +2,93 @@ import pandas as pd
 import numpy as np
 import difflib
 
-# Expected canonical column names
-EXPECTED_COLS = {
-    "historical_commission": ["historical_commission", "historical commission"],
-    "actual_commission": ["actual_commission", "actual commission"],
-    "model_predicted": ["model_predicted", "model predicted"],
-    "bias_gap_usd": ["bias_gap_usd", "bias gap usd"],
-    "bias_pct": ["bias_pct", "bias percent", "bias percentage"],
-}
+# Columns we must be able to find
+REQUIRED = [
+    "Advisor_ID",
+    "Actual_Commission",
+    "Model_Predicted",
+    "Historical_Commission"
+]
 
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    clean = (
-        df.columns
+def load_excel_with_header_detection(uploaded_file):
+    raw = pd.read_excel(uploaded_file, header=None, dtype=str)
+
+    header_row = None
+    for i in range(len(raw)):
+        row = raw.iloc[i].astype(str).str.strip().tolist()
+        matches = sum(1 for col in REQUIRED if col in row)
+        if matches >= 2:
+            header_row = i
+            break
+
+    if header_row is None:
+        raise ValueError("Could not detect header row in this file.")
+
+    df = pd.read_excel(uploaded_file, header=header_row)
+
+    df.columns = (
+        df.columns.astype(str)
         .str.strip()
         .str.replace(r"[\n\r\t]+", "", regex=True)
         .str.replace("\u00A0", " ", regex=False)
         .str.replace(" ", "_")
-        .str.lower()
     )
-    df.columns = clean
+
     return df
 
 
-def fuzzy_map_columns(df: pd.DataFrame) -> dict:
-    mapped = {}
-    for canonical, variants in EXPECTED_COLS.items():
-        candidates = df.columns.tolist()
-        match = difflib.get_close_matches(canonical, candidates, n=1, cutoff=0.6)
-        if match:
-            mapped[canonical] = match[0]
-            continue
+def add_derived_columns(df):
+    cols = df.columns.tolist()
 
-        # Try variant list
-        for v in variants:
-            match = difflib.get_close_matches(v, candidates, n=1, cutoff=0.6)
-            if match:
-                mapped[canonical] = match[0]
-                break
+    def find(col):
+        matches = difflib.get_close_matches(col.lower(), [c.lower() for c in cols], n=1, cutoff=0.6)
+        if matches:
+            idx = [c.lower() for c in cols].index(matches[0])
+            return cols[idx]
+        return None
 
-    return mapped
+    ac = find("actual_commission")
+    mp = find("model_predicted")
+    hc = find("historical_commission")
 
+    missing = [name for name, val in {
+        "Actual_Commission": ac,
+        "Model_Predicted": mp,
+        "Historical_Commission": hc
+    }.items() if val is None]
 
-def add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = normalize_columns(df)
-    mapped = fuzzy_map_columns(df)
-
-    missing = [c for c in EXPECTED_COLS if c not in mapped]
     if missing:
-        raise ValueError(
-            f"Missing required columns: {missing}. "
-            f"Detected columns: {df.columns.tolist()}"
-        )
+        raise ValueError(f"Missing required columns: {missing}")
 
-    ac = mapped["actual_commission"]
-    mp = mapped["model_predicted"]
-    hc = mapped["historical_commission"]
+    df["Delta_Actual_vs_Model"] = df[ac].astype(float) - df[mp].astype(float)
+    df["Delta_Actual_vs_Historical"] = df[ac].astype(float) - df[hc].astype(float)
 
-    df["delta_actual_vs_model"] = df[ac] - df[mp]
-    df["delta_actual_vs_historical"] = df[ac] - df[hc]
+    if "Bias_Gap_USD" not in df.columns:
+        df["Bias_Gap_USD"] = df["Delta_Actual_vs_Model"]
 
-    if "bias_gap_usd" not in mapped:
-        df["bias_gap_usd"] = df["delta_actual_vs_model"]
-
-    if "bias_pct" not in mapped:
-        df["bias_pct"] = 100 * df["delta_actual_vs_model"] / df[mp]
+    if "Bias_Pct" not in df.columns:
+        df["Bias_Pct"] = 100 * df["Delta_Actual_vs_Model"] / df[mp].astype(float)
 
     return df
 
 
-def group_bias(df: pd.DataFrame, feature: str) -> pd.DataFrame:
+def group_bias(df, feature):
     if feature not in df.columns:
         return pd.DataFrame()
 
     agg = (
         df.groupby(feature)
         .agg(
-            count=("advisor_id", "count"),
-            avg_actual=("actual_commission", "mean"),
-            avg_pred=("model_predicted", "mean"),
-            avg_gap=("bias_gap_usd", "mean"),
-            avg_pct=("bias_pct", "mean"),
+            Count=("Advisor_ID", "count"),
+            Avg_Actual=("Actual_Commission", "mean"),
+            Avg_Pred=("Model_Predicted", "mean"),
+            Avg_Gap=("Bias_Gap_USD", "mean"),
+            Avg_Pct=("Bias_Pct", "mean"),
         )
         .reset_index()
     )
 
-    best = agg["avg_pct"].max()
-    agg["gap_vs_best"] = agg["avg_pct"] - best
-    return agg.sort_values("avg_pct")
+    best = agg["Avg_Pct"].max()
+    agg["Gap_vs_Best"] = agg["Avg_Pct"] - best
+
+    return agg.sort_values("Avg_Pct")

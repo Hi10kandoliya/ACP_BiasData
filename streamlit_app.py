@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-from bias_analysis import (
+from bias_model import (
     add_derived_columns,
     group_bias,
     multi_dim_bias,

@@ -384,7 +384,9 @@ def build_pipeline(excel_path: str):
 
     X = df[FEATURES]
     y = df[TARGET]
-
+    # In fit(), predict(), fairness_report() — always reset first
+    X = X.reset_index(drop=True)
+    y = y.reset_index(drop=True)
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.25, random_state=42
     )
